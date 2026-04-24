@@ -9,7 +9,7 @@ Predictive modelling pipeline for the [Kaggle Titanic dataset](https://www.kaggl
 ```
 titanic_assignment/
 ├── data/
-│   ├── train.csv               # Raw training data (download from Kaggle)
+│   ├── train.csv               # Raw training data (downloaded from Kaggle)
 │   ├── test.csv                # Raw test data (optional)
 │   └── train_cleaned.csv       # Output of data cleaning step
 ├── notebooks/
