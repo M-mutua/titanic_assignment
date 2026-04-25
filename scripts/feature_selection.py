@@ -1,165 +1,121 @@
-"""
-feature_selection.py
----------------------
-Selects the most informative features using:
-  1. Correlation analysis (drop highly correlated pairs)
-  2. Random Forest feature importance
-  3. Optional: Recursive Feature Elimination (RFE)
+import argparse
+from pathlib import Path
 
-Outputs a ranked feature list and a trimmed DataFrame ready for modelling.
-"""
-
-import os
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFE
-from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegression
 
 
-# ── Correlation filter ────────────────────────────────────────────────────────
-
-def drop_correlated_features(
-    df: pd.DataFrame,
-    target: str,
-    threshold: float = 0.90,
-) -> tuple[pd.DataFrame, list[str]]:
-    """
-    Remove one feature from each pair whose Pearson correlation exceeds
-    the threshold. We always keep the feature more correlated with the target.
-
-    Returns the trimmed DataFrame and a list of dropped column names.
-    """
-    numeric = df.select_dtypes(include=[np.number]).drop(columns=[target], errors="ignore")
-    corr = numeric.corr().abs()
-
+def remove_high_correlation(df: pd.DataFrame, threshold: float = 0.9):
+    corr = df.corr(numeric_only=True).abs()
     upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-    to_drop = []
-
-    for col in upper.columns:
-        pairs = upper[col][upper[col] > threshold].index.tolist()
-        for paired in pairs:
-            # Keep whichever is more correlated with the survival target
-            if target in df.columns:
-                corr_col = abs(df[col].corr(df[target]))
-                corr_paired = abs(df[paired].corr(df[target]))
-                drop_col = col if corr_col < corr_paired else paired
-            else:
-                drop_col = col
-            if drop_col not in to_drop:
-                to_drop.append(drop_col)
-
-    df_trimmed = df.drop(columns=to_drop, errors="ignore")
-    print(f"[select] Dropped {len(to_drop)} highly correlated feature(s): {to_drop}")
-    return df_trimmed, to_drop
+    to_drop = [column for column in upper.columns if any(upper[column] > threshold)]
+    reduced = df.drop(columns=to_drop, errors="ignore")
+    return reduced, to_drop
 
 
-# ── Random Forest importance ──────────────────────────────────────────────────
-
-def get_rf_importances(
-    X: pd.DataFrame,
-    y: pd.Series,
-    n_estimators: int = 200,
-    random_state: int = 42,
-) -> pd.Series:
-    """
-    Fit a Random Forest and return feature importances as a sorted Series.
-    """
-    rf = RandomForestClassifier(
-        n_estimators=n_estimators,
-        max_depth=None,
+def random_forest_importance(X: pd.DataFrame, y: pd.Series, random_state: int = 42) -> pd.DataFrame:
+    model = RandomForestClassifier(
+        n_estimators=500,
         random_state=random_state,
+        class_weight="balanced",
         n_jobs=-1,
     )
-    rf.fit(X, y)
-    importances = pd.Series(rf.feature_importances_, index=X.columns)
-    return importances.sort_values(ascending=False)
+    model.fit(X, y)
+    importance_df = pd.DataFrame({"feature": X.columns, "importance": model.feature_importances_})
+    importance_df = importance_df.sort_values("importance", ascending=False).reset_index(drop=True)
+    return importance_df
 
 
-def plot_importances(importances: pd.Series, top_n: int = 20, out_path: str = None):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    importances.head(top_n).sort_values().plot(kind="barh", ax=ax, color="steelblue")
-    ax.set_title(f"Top {top_n} Feature Importances (Random Forest)")
-    ax.set_xlabel("Mean Decrease in Impurity")
-    plt.tight_layout()
-    if out_path:
-        fig.savefig(out_path, dpi=150)
-        print(f"[select] Importance plot saved to {out_path}")
-    plt.close(fig)
-
-
-# ── RFE (optional) ────────────────────────────────────────────────────────────
-
-def run_rfe(
-    X: pd.DataFrame,
-    y: pd.Series,
-    n_features_to_select: int = 15,
-    random_state: int = 42,
-) -> list[str]:
-    """
-    Run Recursive Feature Elimination with a Random Forest estimator.
-    Returns the list of selected feature names.
-    """
-    rf = RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1)
-    rfe = RFE(estimator=rf, n_features_to_select=n_features_to_select, step=1)
-    rfe.fit(X, y)
-    selected = X.columns[rfe.support_].tolist()
-    print(f"[select] RFE selected {len(selected)} features: {selected}")
+def run_rfe(X: pd.DataFrame, y: pd.Series, n_features_to_select: int):
+    estimator = LogisticRegression(max_iter=2000)
+    selector = RFE(estimator=estimator, n_features_to_select=n_features_to_select)
+    selector.fit(X, y)
+    selected = list(X.columns[selector.support_])
     return selected
 
 
-# ── Prep helpers ──────────────────────────────────────────────────────────────
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Select best Titanic features.")
+    parser.add_argument("--input-dir", type=str, default="../data", help="Directory containing train_features.csv")
+    parser.add_argument("--output-dir", type=str, default="../data", help="Directory for selected outputs")
+    parser.add_argument("--corr-threshold", type=float, default=0.9, help="Correlation threshold for dropping features")
+    parser.add_argument("--top-k", type=int, default=20, help="Top K features to keep from Random Forest ranking")
+    parser.add_argument("--run-rfe", action="store_true", help="Run optional RFE and export its selection")
+    args = parser.parse_args()
 
-def get_model_ready(df: pd.DataFrame, target: str = "Survived") -> tuple[pd.DataFrame, pd.Series]:
-    """
-    Drop non-numeric / ID columns that have no predictive value,
-    and split X / y.
-    """
-    drop_cols = ["PassengerId", "Name", "Ticket", "Cabin", target]
-    X = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+    input_dir = Path(__file__).resolve().parent / args.input_dir
+    output_dir = Path(__file__).resolve().parent / args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Encode any remaining object columns (shouldn't be any after feature_engineering)
-    for col in X.select_dtypes(include="object").columns:
-        X[col] = LabelEncoder().fit_transform(X[col].astype(str))
+    train_features_path = input_dir / "train_features.csv"
+    test_features_path = input_dir / "test_features.csv"
 
-    # Encode category dtype (e.g. AgeGroup if encode=False was used)
-    for col in X.select_dtypes(include="category").columns:
-        X[col] = X[col].cat.codes
+    if not train_features_path.exists():
+        raise FileNotFoundError(f"Missing required file: {train_features_path}")
 
-    X = X.fillna(0)
-    y = df[target] if target in df.columns else None
-    return X, y
+    train_df = pd.read_csv(train_features_path)
+    test_df = pd.read_csv(test_features_path) if test_features_path.exists() else None
 
+    if "Survived" not in train_df.columns:
+        raise ValueError("train_features.csv must contain 'Survived' column")
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+    y = train_df["Survived"].astype(int)
+    X = train_df.drop(columns=["Survived"])
+
+    X_reduced, dropped_corr = remove_high_correlation(X, threshold=args.corr_threshold)
+    importance_df = random_forest_importance(X_reduced, y)
+
+    top_k = min(args.top_k, len(importance_df))
+    selected_features = importance_df.head(top_k)["feature"].tolist()
+
+    selected_train = train_df[["Survived"] + selected_features]
+    selected_train_out = output_dir / "train_selected.csv"
+    selected_train.to_csv(selected_train_out, index=False)
+
+    selected_test_out = None
+    if test_df is not None:
+        missing_cols = [c for c in selected_features if c not in test_df.columns]
+        for col in missing_cols:
+            test_df[col] = 0
+        selected_test = test_df[selected_features]
+        selected_test_out = output_dir / "test_selected.csv"
+        selected_test.to_csv(selected_test_out, index=False)
+
+    importance_out = output_dir / "feature_importance.csv"
+    importance_df.to_csv(importance_out, index=False)
+
+    selected_txt_out = output_dir / "selected_features.txt"
+    with selected_txt_out.open("w", encoding="utf-8") as f:
+        f.write("Selected features (Random Forest top-ranked):\n")
+        for feat in selected_features:
+            f.write(f"- {feat}\n")
+
+        f.write("\nDropped due to high correlation:\n")
+        if dropped_corr:
+            for feat in dropped_corr:
+                f.write(f"- {feat}\n")
+        else:
+            f.write("- None\n")
+
+    print(f"Saved: {selected_train_out}")
+    if selected_test_out:
+        print(f"Saved: {selected_test_out}")
+    print(f"Saved: {importance_out}")
+    print(f"Saved: {selected_txt_out}")
+
+    if args.run_rfe:
+        rfe_k = min(10, X_reduced.shape[1])
+        rfe_selected = run_rfe(X_reduced, y, n_features_to_select=rfe_k)
+        rfe_out = output_dir / "rfe_selected_features.txt"
+        with rfe_out.open("w", encoding="utf-8") as f:
+            f.write("RFE selected features:\n")
+            for feat in rfe_selected:
+                f.write(f"- {feat}\n")
+        print(f"Saved: {rfe_out}")
+
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, os.path.dirname(__file__))
-    from data_cleaning import load_data, clean
-    from feature_engineering import build_features
-
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    raw_path = os.path.join(base, "data", "train.csv")
-
-    df = load_data(raw_path)
-    df = clean(df)
-    df = build_features(df)
-
-    df, dropped = drop_correlated_features(df, target="Survived")
-    X, y = get_model_ready(df)
-
-    importances = get_rf_importances(X, y)
-    print("\nTop 20 features by RF importance:")
-    print(importances.head(20))
-
-    plot_path = os.path.join(base, "data", "feature_importances.png")
-    plot_importances(importances, out_path=plot_path)
-
-    # Save final selected features list
-    top_features = importances[importances > 0.01].index.tolist()
-    print(f"\n[select] Features with importance > 1%: {top_features}")
-
-    # Optional RFE
-    rfe_features = run_rfe(X, y, n_features_to_select=15)
+    main()

@@ -1,17 +1,20 @@
-# Titanic Survival Prediction — AI Assignment 2
+# Titanic Survival Prediction DataSet Analysis— AI Assignment 2
 
-Predictive modelling pipeline for the [Kaggle Titanic dataset](https://www.kaggle.com/c/titanic), covering data cleaning, feature engineering, and feature selection.
+Predictive modelling pipeline for the [Kaggle Titanic dataset](https://www.kaggle.com/c/titanic)
 
----
+## Project Objective
+Build a predictive pipeline for Titanic survival by performing:
+- Data cleaning
+- Feature engineering
+- Feature selection
 
 ## Project Structure
 
-```
+```text
 titanic_assignment/
 ├── data/
-│   ├── train.csv               # Raw training data (downloaded from Kaggle)
-│   ├── test.csv                # Raw test data (optional)
-│   └── train_cleaned.csv       # Output of data cleaning step
+│   ├── train.csv
+│   └── test.csv
 ├── notebooks/
 │   └── Titanic_Feature_Engineering.ipynb
 ├── scripts/
@@ -22,21 +25,22 @@ titanic_assignment/
 └── requirements.txt
 ```
 
----
+## Setup
 
-## Getting Started
-
-### 1. Get the data
-
-Download `train.csv` and `test.csv` from [Kaggle](https://www.kaggle.com/c/titanic/data) and place them in the `data/` folder.
-
-### 2. Install dependencies
+1. Create and activate a virtual environment.
+2. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the notebook
+## Get the data
+
+Download `train.csv` and `test.csv` from [Kaggle](https://www.kaggle.com/c/titanic/data) and place them in the `data/` folder.
+
+## How To Run
+
+From inside `titanic_assignment/scripts/`:
 
 ```bash
 cd notebooks
@@ -50,52 +54,66 @@ cd scripts
 
 python3 data_cleaning.py        # Outputs data/train_cleaned.csv
 python3 feature_engineering.py  # Outputs data/train_engineered.csv
-python3 feature_selection.py    # Prints ranked features + saves importance plot
+python3 feature_selection.py    # Prints ranked features 
 ```
 
 ---
 
-## Approach
 
-### Data Cleaning
+Generated files are written to `../data/`
 
-- **Age (~20% missing):** Filled with the median (more robust than mean for right-skewed data). Added a `HasAge` binary flag to preserve the information that age was missing.
-- **Embarked (<1% missing):** Filled with mode ('S').
-- **Cabin (~77% missing):** Not imputed — too sparse. The deck letter is extracted as a categorical feature in the engineering step.
-- **Fare outliers:** Capped at the 99th percentile. One passenger paid £512 — capping prevents this from distorting scale-sensitive models.
-- **Age outliers:** Capped at [0, 80] — biologically reasonable bounds.
+## Approach Summary
 
-### Features Engineered
+### Part 1: Data Cleaning
+- Missing value handling:
+  - `Age`: imputed using median grouped by `Sex` and `Pclass`
+  - `Fare`: imputed using median grouped by `Pclass`
+  - `Embarked`: imputed using mode
+  - Missing indicator flags created: `AgeWasMissing`, `FareWasMissing`, `CabinWasMissing`, `EmbarkedWasMissing`
+- Outlier handling:
+  - `Age` and `Fare` capped using IQR-based clipping
+- Data consistency:
+  - Standardized `Sex` values to `male`/`female`/`unknown`
+  - Removed duplicates
+- Deliverable:
+  - `data/train_cleaned.csv`
 
-| Feature | Description |
-|---------|-------------|
-| `FamilySize` | SibSp + Parch + 1 |
-| `IsAlone` | 1 if travelling solo |
-| `Title` | Extracted from Name (Mr, Mrs, Miss, Master, Rare) |
-| `Deck` | First character of Cabin, Unknown if missing |
-| `AgeGroup` | Binned: Child / Teen / Adult / Senior |
-| `FarePerPerson` | Fare / FamilySize |
-| `Fare_log` | log1p(Fare) — reduces right skew |
-| `FarePerPerson_log` | log1p(FarePerPerson) |
-| `Pclass_x_Fare` | Interaction term (optional) |
+### Part 2: Feature Engineering
+Engineered features:
+- `FamilySize = SibSp + Parch + 1`
+- `IsAlone = 1 if FamilySize == 1 else 0`
+- `Title` extracted from `Name` and grouped (`Mr`, `Mrs`, `Miss`, `Master`, `Rare`)
+- `Deck` extracted from `Cabin`
+- `AgeGroup` (`Child`, `Teen`, `Adult`, `Senior`)
+- `FarePerPerson = Fare / FamilySize`
+- Interaction features: `Pclass_Fare`, `Age_Pclass`
+- Transformations: `Fare_log`, `Age_log`
+- Encoding:
+  - One-hot encoding for `Sex`, `Embarked`, `Title`, `Deck`, `AgeGroup`
+  - `Pclass` kept numeric (ordinal)
+- Scaling:
+  - StandardScaler applied to numeric feature columns
 
-### Feature Selection
+### Part 3: Feature Selection
+- Correlation analysis removes highly correlated columns (threshold configurable, default `0.9`)
+- Random Forest ranks remaining features
+- Top-K selected features exported (`selected_features.txt`)
+- Optional RFE (`--run-rfe`) for extra credit
 
-1. **Correlation filter:** Drop one feature from pairs with Pearson |r| > 0.90, keeping the feature more correlated with the target.
-2. **Random Forest importance:** Rank all features by mean decrease in impurity across 200 trees.
-3. **RFE (optional):** Recursive Feature Elimination with RF estimator, selecting the top 15 features.
+## Notebook Expectations
+The notebook `notebooks/Titanic_Feature_Engineering.ipynb` should include:
+- Missing value analysis and cleaning decisions
+- Visualizations (distribution, boxplots, correlation heatmap)
+- Feature creation steps with sample rows
+- Feature selection justification
+- Final list of selected features and key observations
 
-### Key Findings
+## Key Findings (Filled After Running and performing the data cleaning of the loaded dara)
+- Most predictive features:
+  - (Update from `data/feature_importance.csv`)
+- High-impact engineered features:
+  - (Update after analysis)
+- Correlation-based drops:
+  - (Update from `data/selected_features.txt`)
 
-- `Sex` is the single strongest predictor — women survived at ~74% vs ~19% for men.
-- `Title` compresses gender and social class into a single ordinal-like feature and ranks near the top.
-- `Pclass` and `Fare_log` together capture socioeconomic status more cleanly than either alone.
-- Solo travellers (`IsAlone = 1`) have significantly lower survival rates.
-- `Cabin` is too sparse to use directly; `Deck` extracts the useful signal at the cost of a large `Unknown` category.
-- `SibSp` and `Parch` individually are weaker than their composite `FamilySize` and are dropped.
 
----
-
-## Requirements
-
-See `requirements.txt`.
